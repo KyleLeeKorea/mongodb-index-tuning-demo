@@ -1,0 +1,1143 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MongoDB Index Tuning Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 30px;
+        }
+
+        h1 {
+            color: #2d3748;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .subtitle {
+            color: #718096;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+
+        .controls {
+            background: #f7fafc;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e2e8f0;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            margin-right: 10px;
+            transition: all 0.3s;
+        }
+
+        button small {
+            display: block;
+            margin-top: 5px;
+            font-weight: 400;
+        }
+
+        button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:disabled {
+            background: #a0aec0;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .scenario {
+            background: #fff;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 20px;
+        }
+
+        .scenario h2 {
+            color: #2d3748;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }
+
+        .results {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .result-card {
+            background: #f7fafc;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            border-radius: 5px;
+        }
+
+        .result-card h3 {
+            color: #2d3748;
+            margin-bottom: 10px;
+        }
+
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .metric-label {
+            color: #718096;
+        }
+
+        .metric-value {
+            color: #2d3748;
+            font-weight: 600;
+        }
+
+        .improvement {
+            color: #48bb78;
+            font-weight: bold;
+        }
+
+        .regression {
+            color: #f56565;
+            font-weight: bold;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        .alert-info {
+            background: #bee3f8;
+            color: #2c5282;
+            border-left: 4px solid #3182ce;
+        }
+
+        .alert-success {
+            background: #c6f6d5;
+            color: #22543d;
+            border-left: 4px solid #38a169;
+        }
+
+        .alert-error {
+            background: #fed7d7;
+            color: #742a2a;
+            border-left: 4px solid #e53e3e;
+        }
+
+        .query-info {
+            background: #edf2f7;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            color: #2d3748;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>MongoDB Index Tuning Demo</h1>
+        <p class="subtitle">Compare query performance with different index strategies</p>
+
+        <div class="controls">
+            <div class="control-group">
+                <label>MongoDB Connection URI</label>
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" id="dbConnection" value="mongodb+srv://id:password@your_mongodb_url.mongodb.net/" style="flex: 1;">
+                    <button onclick="updateConnection()" style="background: #10b981;">Connect</button>
+                </div>
+                <small style="display: block; margin-top: 5px; color: #666;">
+                    예: mongodb+srv://username:password@cluster.mongodb.net/
+                </small>
+            </div>
+            <div class="control-group">
+                <label>Generate Sample Data</label>
+                <div style="display: flex; gap: 10px;">
+                    <button onclick="generateData(1000000)" style="flex: 1;">
+                        Generate 1M Sample Data<br>
+                        <small style="font-size: 0.8em; opacity: 0.8;">(약 2분 소요)</small>
+                    </button>
+                    <button onclick="generateData(10000000)" style="flex: 1;">
+                        Generate 10M Sample Data<br>
+                        <small style="font-size: 0.8em; opacity: 0.8;">(약 20분 소요)</small>
+                    </button>
+                </div>
+            </div>
+            <button onclick="checkStatistics()">Check Statistics</button>
+            <button onclick="runAllScenarios()">Run All Scenarios</button>
+            <div id="status"></div>
+        </div>
+
+        <!-- Scenario 1-1: Equality Search -->
+        <div class="scenario">
+            <h2>Scenario 1-1: Equality Search - SKU 단일 검색</h2>
+            <p>Compare query performance when searching by exact SKU match (1건 반환)</p>
+            
+            <div class="control-group">
+                <label>Test Data Size</label>
+                <select id="scenario11-dataSize" style="width: 100%; margin-bottom: 15px;">
+                    <option value="1m">1M Records (Quick Test)</option>
+                    <option value="10m">10M Records (Better Impact Demo)</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label>Query Filter (SKU 정확 일치)</label>
+                <textarea id="scenario11-query" rows="2">{ "sku": "SKU-00001000" }</textarea>
+            </div>
+            
+            <div class="control-group">
+                <label>Index Definition</label>
+                <input type="text" id="scenario11-index" value='{ "sku": 1 }'>
+            </div>
+            
+            <button onclick="runScenario11()">Run Scenario 1-1</button>
+            <div id="scenario11-results"></div>
+        </div>
+
+        <!-- Scenario 1-2: Range Scan - 10건 미만 -->
+        <div class="scenario">
+            <h2>Scenario 1-2: Range Scan - 가격 범위 검색 (10건 미만)</h2>
+            <p>Compare query performance when searching by price range. Returns less than 10 documents.</p>
+            
+            <div class="control-group">
+                <label>Test Data Size</label>
+                <select id="scenario12-dataSize" style="width: 100%; margin-bottom: 15px;">
+                    <option value="1m">1M Records (Quick Test)</option>
+                    <option value="10m">10M Records (Better Impact Demo)</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label>Query Filter (가격 범위)</label>
+                <textarea id="scenario12-query" rows="2">{ "price": { "$gte": 500, "$lte": 501 } }</textarea>
+            </div>
+            
+            <div class="control-group">
+                <label>Index Definition</label>
+                <input type="text" id="scenario12-index" value='{ "price": 1 }'>
+            </div>
+            
+            <button onclick="runScenario12()">Run Scenario 1-2</button>
+            <div id="scenario12-results"></div>
+        </div>
+
+        <!-- Scenario 1-3: Range Scan - 100건 -->
+        <div class="scenario">
+            <h2>Scenario 1-3: Range Scan - 가격 범위 검색 (100건)</h2>
+            <p>Compare query performance when searching by price range. Returns about 100 documents.</p>
+            
+            <div class="control-group">
+                <label>Test Data Size</label>
+                <select id="scenario13-dataSize" style="width: 100%; margin-bottom: 15px;">
+                    <option value="1m">1M Records (Quick Test)</option>
+                    <option value="10m">10M Records (Better Impact Demo)</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label>Query Filter (가격 범위)</label>
+                <textarea id="scenario13-query" rows="2">{ "price": { "$gte": 100, "$lte": 500 } }</textarea>
+            </div>
+            
+            <div class="control-group">
+                <label>Index Definition</label>
+                <input type="text" id="scenario13-index" value='{ "price": 1 }'>
+            </div>
+            
+            <button onclick="runScenario13()">Run Scenario 1-3</button>
+            <div id="scenario13-results"></div>
+        </div>
+
+        <!-- Scenario 2: Index Order Comparison -->
+        <div class="scenario">
+            <h2>Scenario 2: Index Order Comparison (abc vs acb)</h2>
+            <p>Compare query performance with indexes in different order: category-price-stock vs category-stock-price</p>
+            
+            <div class="control-group">
+                <label>Test Data Size</label>
+                <select id="scenario2-dataSize" style="width: 100%; margin-bottom: 15px;">
+                    <option value="1m">1M Records (Quick Test)</option>
+                    <option value="10m">10M Records (Better Impact Demo)</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label>Query Filter</label>
+                <textarea id="scenario2-query" rows="2">{ "category": "Electronics", "price": { "$gte": 100 }, "stock": { "$gte": 50 } }</textarea>
+            </div>
+            
+            <div class="control-group">
+                <label>Index 1 (abc order: category-price-stock)</label>
+                <input type="text" id="scenario2-index1" value='{ "category": 1, "price": 1, "stock": 1 }'>
+            </div>
+            
+            <div class="control-group">
+                <label>Index 2 (acb order: category-stock-price)</label>
+                <input type="text" id="scenario2-index2" value='{ "category": 1, "stock": 1, "price": 1 }'>
+            </div>
+            
+            <button onclick="runScenario2()">Run Scenario 2</button>
+            <div id="scenario2-results"></div>
+        </div>
+
+        <!-- Scenario 3: Index Prefix Comparison -->
+        <div class="scenario">
+            <h2>Scenario 3: Index Prefix Effect (abc 인덱스로 a 필드 검색)</h2>
+            <p>abc 인덱스가 있는 경우, a 필드로만 검색해도 효율적입니다. abc 인덱스와 a 인덱스를 비교합니다.</p>
+            
+            <div class="control-group">
+                <label>Test Data Size</label>
+                <select id="scenario3-dataSize" style="width: 100%; margin-bottom: 15px;">
+                    <option value="1m">1M Records (Quick Test)</option>
+                    <option value="10m">10M Records (Better Impact Demo)</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label>Query Filter (a 필드만 사용)</label>
+                <textarea id="scenario3-query" rows="2">{ "category": "Electronics" }</textarea>
+            </div>
+            
+            <div class="control-group">
+                <label>Index 1 (abc: category-price-brand)</label>
+                <input type="text" id="scenario3-index1" value='{ "category": 1, "price": 1, "brand": 1 }'>
+            </div>
+            
+            <div class="control-group">
+                <label>Index 2 (a: category만)</label>
+                <input type="text" id="scenario3-index2" value='{ "category": 1 }'>
+            </div>
+            
+            <button onclick="runScenario3()">Run Scenario 3</button>
+            <div id="scenario3-results"></div>
+        </div>
+
+        <!-- Scenario 4: ESR vs ERS -->
+        <div class="scenario">
+            <h2>Scenario 4: ESR vs ERS Comparison</h2>
+            <p>Compare MongoDB's recommended ESR (Equality, Sort, Range) vs incorrect ERS ordering.</p>
+            
+            <div class="control-group">
+                <label>Test Data Size</label>
+                <select id="scenario4-dataSize" style="width: 100%; margin-bottom: 15px;">
+                    <option value="1m">1M Records (Quick Test)</option>
+                    <option value="10m">10M Records (Better Impact Demo)</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label>Query Filter (Equality & Range)</label>
+                <textarea id="scenario4-query" rows="2">{ "category": "Electronics", "price": { "$gte": 100, "$lte": 500 } }</textarea>
+            </div>
+            
+            <div class="control-group">
+                <label>Sort Order</label>
+                <input type="text" id="scenario4-sort" value='{ "rating": -1 }'>
+            </div>
+            
+            <div class="control-group">
+                <label>Index 1 (ESR - Recommended)</label>
+                <input type="text" id="scenario4-index1" value='{ "category": 1, "rating": -1, "price": 1 }'>
+            </div>
+            
+            <div class="control-group">
+                <label>Index 2 (ERS - Incorrect)</label>
+                <input type="text" id="scenario4-index2" value='{ "category": 1, "price": 1, "rating": -1 }'>
+            </div>
+            
+            <button onclick="runScenario4()">Run Scenario 4</button>
+            <div id="scenario4-results"></div>
+        </div>
+
+        <!-- Scenario 5: Index Direction Symmetric Comparison -->
+        <div class="scenario">
+            <h2>Scenario 5: Index Direction - 반대 방향 sort 효율성</h2>
+            <p>{category: 1, rating: -1} 인덱스가 {category: -1, rating: 1} sort를 위해 추가 인덱스가 필요한가? 역방향 인덱스로 효율적으로 처리됩니다.</p>
+            
+            <div class="control-group">
+                <label>Test Data Size</label>
+                <select id="scenario5-dataSize" style="width: 100%; margin-bottom: 15px;">
+                    <option value="1m">1M Records (Quick Test)</option>
+                    <option value="10m">10M Records (Better Impact Demo)</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label>Query Filter</label>
+                <textarea id="scenario5-query" rows="2">{ "category": "Electronics", "rating": 4.5 }</textarea>
+            </div>
+            
+            <div class="control-group">
+                <label>Sort Order (방향 반대)</label>
+                <textarea id="scenario5-sort" rows="2">{ "category": -1, "rating": 1 }</textarea>
+            </div>
+            
+            <div class="control-group">
+                <label>Index 1 (순서 맞음: category:1, rating:-1)</label>
+                <input type="text" id="scenario5-index1" value='{ "category": 1, "rating": -1 }'>
+            </div>
+            
+            <div class="control-group">
+                <label>Index 2 (역방향: category:-1, rating:1)</label>
+                <input type="text" id="scenario5-index2" value='{ "category": -1, "rating": 1 }'>
+            </div>
+            
+            <button onclick="runScenario5()">Run Scenario 5</button>
+            <div id="scenario5-results"></div>
+        </div>
+    </div>
+
+    <script>
+        async function updateConnection() {
+            const uri = document.getElementById('dbConnection').value;
+            
+            if (!uri || !uri.includes('mongodb')) {
+                document.getElementById('status').innerHTML = 
+                    '<div class="alert alert-error">Error: Please enter a valid MongoDB connection URI</div>';
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/update-connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ connectionUri: uri })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('status').innerHTML = 
+                        '<div class="alert alert-success">Success: MongoDB connection updated successfully!</div>';
+                } else {
+                    document.getElementById('status').innerHTML = 
+                        `<div class="alert alert-error">Error: Error: ${data.error}</div>`;
+                }
+            } catch (error) {
+                document.getElementById('status').innerHTML = 
+                    `<div class="alert alert-error">Error: Error: ${error.message}</div>`;
+            }
+        }
+
+        async function generateData(count) {
+            const status = document.getElementById('status');
+            const countLabel = count === 1000000 ? '1M' : '10M';
+            const estimatedTime = count === 1000000 ? '약 2분' : '약 20분';
+            status.innerHTML = `<span class="loading"></span> Generating ${countLabel} sample documents (${estimatedTime} 소요)...`;
+            
+            try {
+                const response = await fetch('/api/generate-data', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ count })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    status.innerHTML = `<div class="alert alert-success">Success: ${data.message}</div>`;
+                } else {
+                    status.innerHTML = `<div class="alert alert-error">Error: Error: ${data.error}</div>`;
+                }
+            } catch (error) {
+                status.innerHTML = `<div class="alert alert-error">Error: Error: ${error.message}</div>`;
+            }
+        }
+
+        async function checkStatistics() {
+            const status = document.getElementById('status');
+            status.innerHTML = '<span class="loading"></span> Checking database statistics...';
+            
+            try {
+                const response = await fetch('/api/statistics');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const stats = data.statistics;
+                    const statsHtml = `
+                        <div class="alert alert-success">
+                            <h4 style="margin-bottom: 10px;">📊 Database Statistics</h4>
+                            <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                                <div>
+                                    <strong>Total Documents:</strong> ${stats.documentCount.toLocaleString()}
+                                </div>
+                                <div>
+                                    <strong>products_1m:</strong> ${stats.collections['products_1m'].toLocaleString()}
+                                </div>
+                                <div>
+                                    <strong>products_10m:</strong> ${stats.collections['products_10m'].toLocaleString()}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    status.innerHTML = statsHtml;
+                } else {
+                    status.innerHTML = `<div class="alert alert-error">Error: Error: ${data.error}</div>`;
+                }
+            } catch (error) {
+                status.innerHTML = `<div class="alert alert-error">Error: Error: ${error.message}</div>`;
+            }
+        }
+
+        async function runScenario11() {
+            const resultsDiv = document.getElementById('scenario11-results');
+            resultsDiv.innerHTML = '<span class="loading"></span> Running Scenario 1-1...';
+            
+            try {
+                const dataSize = document.getElementById('scenario11-dataSize').value;
+                const query = JSON.parse(document.getElementById('scenario11-query').value);
+                const index = JSON.parse(document.getElementById('scenario11-index').value);
+                
+                const response = await fetch('/api/scenario1', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filter: query, index, limit: 100, dataSize })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to execute scenario 1-1');
+                }
+                
+                displayScenario1Results(data, 'scenario11-results');
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="alert alert-error">Error: Error: ${error.message}</div>`;
+            }
+        }
+
+        async function runScenario12() {
+            const resultsDiv = document.getElementById('scenario12-results');
+            resultsDiv.innerHTML = '<span class="loading"></span> Running Scenario 1-2...';
+            
+            try {
+                const dataSize = document.getElementById('scenario12-dataSize').value;
+                const query = JSON.parse(document.getElementById('scenario12-query').value);
+                const index = JSON.parse(document.getElementById('scenario12-index').value);
+                
+                const response = await fetch('/api/scenario1', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filter: query, index, limit: 100, dataSize })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to execute scenario 1-2');
+                }
+                
+                displayScenario1Results(data, 'scenario12-results');
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="alert alert-error">Error: Error: ${error.message}</div>`;
+            }
+        }
+
+        async function runScenario13() {
+            const resultsDiv = document.getElementById('scenario13-results');
+            resultsDiv.innerHTML = '<span class="loading"></span> Running Scenario 1-3...';
+            
+            try {
+                const dataSize = document.getElementById('scenario13-dataSize').value;
+                const query = JSON.parse(document.getElementById('scenario13-query').value);
+                const index = JSON.parse(document.getElementById('scenario13-index').value);
+                
+                const response = await fetch('/api/scenario1', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filter: query, index, limit: 100, dataSize })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to execute scenario 1-3');
+                }
+                
+                displayScenario1Results(data, 'scenario13-results');
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="alert alert-error">Error: Error: ${error.message}</div>`;
+            }
+        }
+
+        async function runScenario2() {
+            const resultsDiv = document.getElementById('scenario2-results');
+            resultsDiv.innerHTML = '<span class="loading"></span> Running Scenario 2...';
+            
+            try {
+                const dataSize = document.getElementById('scenario2-dataSize').value;
+                const query = JSON.parse(document.getElementById('scenario2-query').value);
+                const index1 = JSON.parse(document.getElementById('scenario2-index1').value);
+                const index2 = JSON.parse(document.getElementById('scenario2-index2').value);
+                
+                const response = await fetch('/api/scenario2', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filter: query, index1, index2, limit: 100, dataSize })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to execute scenario 2');
+                }
+                
+                displayScenario2Results(data);
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="alert alert-error">Error: Error: ${error.message}</div>`;
+            }
+        }
+
+        async function runScenario3() {
+            const resultsDiv = document.getElementById('scenario3-results');
+            resultsDiv.innerHTML = '<span class="loading"></span> Running Scenario 3...';
+            
+            try {
+                const dataSize = document.getElementById('scenario3-dataSize').value;
+                const query = JSON.parse(document.getElementById('scenario3-query').value);
+                const index1 = JSON.parse(document.getElementById('scenario3-index1').value);
+                const index2 = JSON.parse(document.getElementById('scenario3-index2').value);
+                
+                const response = await fetch('/api/scenario3', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filter: query, index1, index2, limit: 100, dataSize })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to execute scenario 3');
+                }
+                
+                displayScenario3Results(data);
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="alert alert-error">Error: Error: ${error.message}</div>`;
+            }
+        }
+
+        async function runScenario4() {
+            const resultsDiv = document.getElementById('scenario4-results');
+            resultsDiv.innerHTML = '<span class="loading"></span> Running Scenario 4...';
+            
+            try {
+                const dataSize = document.getElementById('scenario4-dataSize').value;
+                const query = JSON.parse(document.getElementById('scenario4-query').value);
+                const sort = JSON.parse(document.getElementById('scenario4-sort').value);
+                const index1 = JSON.parse(document.getElementById('scenario4-index1').value);
+                const index2 = JSON.parse(document.getElementById('scenario4-index2').value);
+                
+                const response = await fetch('/api/scenario4', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filter: query, sort, index1, index2, limit: 100, dataSize })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to execute scenario 4');
+                }
+                
+                displayScenario4Results(data);
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="alert alert-error">Error: Error: ${error.message}</div>`;
+            }
+        }
+
+        async function runScenario5() {
+            const resultsDiv = document.getElementById('scenario5-results');
+            resultsDiv.innerHTML = '<span class="loading"></span> Running Scenario 5...';
+            
+            try {
+                const dataSize = document.getElementById('scenario5-dataSize').value;
+                const query = JSON.parse(document.getElementById('scenario5-query').value);
+                const sort = JSON.parse(document.getElementById('scenario5-sort').value);
+                const index1 = JSON.parse(document.getElementById('scenario5-index1').value);
+                const index2 = JSON.parse(document.getElementById('scenario5-index2').value);
+                
+                const response = await fetch('/api/scenario5', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filter: query, sort, index1, index2, limit: 100, dataSize })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to execute scenario 5');
+                }
+                
+                displayScenario5Results(data);
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="alert alert-error">Error: Error: ${error.message}</div>`;
+            }
+        }
+
+        function displayScenario1Results(data, resultsDivId = 'scenario1-results') {
+            const resultsDiv = document.getElementById(resultsDivId);
+            
+            if (!data.success || !data.noIndex || !data.withIndex) {
+                resultsDiv.innerHTML = `<div class="alert alert-error">Error: Invalid response from server: ${JSON.stringify(data)}</div>`;
+                return;
+            }
+            
+            const noIndex = data.noIndex;
+            const withIndex = data.withIndex;
+            const docsExaminedRatio = ((noIndex.executionStats.totalDocsExamined || 0) / (withIndex.executionStats.totalDocsExamined || 1)).toFixed(1);
+            const timeImprovement = ((noIndex.executionTime - withIndex.executionTime) / noIndex.executionTime * 100).toFixed(2);
+            
+            const mqlSection = data.mql ? `
+                <div class="result-card" style="border: 2px solid #6366f1;">
+                    <h3>📋 MQL (MongoDB Query Language)</h3>
+                    <div style="background: #1e1e2e; padding: 15px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 13px; overflow-x: auto;">
+                        <div style="color: #a78bfa; margin-bottom: 10px;"><strong>// Query:</strong></div>
+                        <pre style="margin: 5px 0; color: #a5a5a5;">db.products.find(${data.mql.query}).limit(${100})</pre>
+                        ${data.mql.index ? `
+                            <div style="color: #a78bfa; margin-top: 15px; margin-bottom: 10px;"><strong>// Index:</strong></div>
+                            <pre style="margin: 5px 0; color: #a5a5a5;">db.products.createIndex(${data.mql.index})</pre>
+                        ` : ''}
+                    </div>
+                </div>
+            ` : '';
+            
+            resultsDiv.innerHTML = mqlSection + `
+                <div class="results">
+                    <div class="result-card">
+                        <h3>Without Index</h3>
+                        <div class="metric">
+                            <span class="metric-label">Execution Time:</span>
+                            <span class="metric-value">${noIndex.executionTime}ms</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Examined:</span>
+                            <span class="metric-value">${noIndex.executionStats.totalDocsExamined || 'N/A'}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Returned:</span>
+                            <span class="metric-value">${noIndex.executionStats.nReturned || 0}</span>
+                        </div>
+                    </div>
+                    <div class="result-card">
+                        <h3>With Index</h3>
+                        <div class="metric">
+                            <span class="metric-label">Execution Time:</span>
+                            <span class="metric-value ${withIndex.executionTime < noIndex.executionTime ? 'improvement' : ''}">${withIndex.executionTime}ms</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Examined:</span>
+                            <span class="metric-value improvement">${withIndex.executionStats.totalDocsExamined || 'N/A'}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Returned:</span>
+                            <span class="metric-value">${withIndex.executionStats.nReturned || 0}</span>
+                        </div>
+                    </div>
+                    <div class="result-card">
+                        <h3>Key Insight</h3>
+                        <div class="metric">
+                            <span class="metric-label">Index Efficiency:</span>
+                            <span class="metric-value improvement">${docsExaminedRatio}x fewer docs examined</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Time Comparison:</span>
+                            <span class="metric-value ${timeImprovement > 0 ? 'improvement' : 'regression'}">
+                                ${timeImprovement > 0 ? '+' : ''}${timeImprovement}% speed
+                            </span>
+                        </div>
+                        <div class="query-info" style="margin-top: 10px; font-size: 12px;">
+                            <strong>중요:</strong> 데이터가 적을 때는 시간 측정보다 "Documents Examined"가 더 중요한 지표입니다. 인덱스는 MongoDB가 검사해야 하는 문서 수를 ${docsExaminedRatio}배 감소시켰습니다.
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function displayScenario2Results(data) {
+            const resultsDiv = document.getElementById('scenario2-results');
+            
+            if (!data.success || !data.index1 || !data.index2) {
+                resultsDiv.innerHTML = `<div class="alert alert-error">Error: Invalid response from server: ${JSON.stringify(data)}</div>`;
+                return;
+            }
+            
+            const index1 = data.index1;
+            const index2 = data.index2;
+            const faster = index1.executionTime < index2.executionTime ? 'Index 1 (abc: category-price-stock)' : 'Index 2 (acb: category-stock-price)';
+            
+            const mqlSection = data.mql ? `
+                <div class="result-card" style="border: 2px solid #6366f1;">
+                    <h3>📋 MQL (MongoDB Query Language)</h3>
+                    <div style="background: #1e1e2e; padding: 15px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 13px; overflow-x: auto;">
+                        <div style="color: #a78bfa; margin-bottom: 10px;"><strong>// Query:</strong></div>
+                        <pre style="margin: 5px 0; color: #a5a5a5;">db.products.find(${data.mql.query}).limit(100)</pre>
+                        <div style="color: #a78bfa; margin-top: 15px; margin-bottom: 10px;"><strong>// Index 1:</strong></div>
+                        <pre style="margin: 5px 0; color: #a5a5a5;">db.products.createIndex(${data.mql.index1})</pre>
+                        <div style="color: #a78bfa; margin-top: 15px; margin-bottom: 10px;"><strong>// Index 2:</strong></div>
+                        <pre style="margin: 5px 0; color: #a5a5a5;">db.products.createIndex(${data.mql.index2})</pre>
+                    </div>
+                </div>
+            ` : '';
+            
+            resultsDiv.innerHTML = mqlSection + `
+                <div class="results">
+                    <div class="result-card">
+                        <h3>Index Order abc (category-price-stock)</h3>
+                        <div class="metric">
+                            <span class="metric-label">Execution Time:</span>
+                            <span class="metric-value">${index1.executionTime}ms</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Examined:</span>
+                            <span class="metric-value">${index1.executionStats.totalDocsExamined || 'N/A'}</span>
+                        </div>
+                    </div>
+                    <div class="result-card">
+                        <h3>Index Order acb (category-stock-price)</h3>
+                        <div class="metric">
+                            <span class="metric-label">Execution Time:</span>
+                            <span class="metric-value">${index2.executionTime}ms</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Examined:</span>
+                            <span class="metric-value">${index2.executionStats.totalDocsExamined || 'N/A'}</span>
+                        </div>
+                    </div>
+                    <div class="result-card">
+                        <h3>Winner</h3>
+                        <div class="metric">
+                            <span class="metric-label">Faster Index:</span>
+                            <span class="metric-value improvement">${faster}</span>
+                        </div>
+                        <div class="query-info" style="font-size: 12px;">
+                            <strong>참고:</strong> 첫 번째 필드가 같을 때, 두 번째 필드의 순서가 쿼리 패턴에 따라 성능에 영향을 줍니다.
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function displayScenario3Results(data) {
+            const resultsDiv = document.getElementById('scenario3-results');
+            
+            if (!data.success || !data.index1 || !data.index2) {
+                resultsDiv.innerHTML = `<div class="alert alert-error">Error: Invalid response from server: ${JSON.stringify(data)}</div>`;
+                return;
+            }
+            
+            const index1 = data.index1;
+            const index2 = data.index2;
+            
+            const mqlSection = data.mql ? `
+                <div class="result-card" style="border: 2px solid #6366f1;">
+                    <h3>📋 MQL (MongoDB Query Language)</h3>
+                    <div style="background: #1e1e2e; padding: 15px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 13px; overflow-x: auto;">
+                        <div style="color: #a78bfa; margin-bottom: 10px;"><strong>// Query:</strong></div>
+                        <pre style="margin: 5px 0; color: #a5a5a5;">db.products.find(${data.mql.query}).limit(100)</pre>
+                        <div style="color: #a78bfa; margin-top: 15px; margin-bottom: 10px;"><strong>// Compound Index (can be used for prefix):</strong></div>
+                        <pre style="margin: 5px 0; color: #a5a5a5;">db.products.createIndex(${data.mql.index1})</pre>
+                        <div style="color: #a78bfa; margin-top: 15px; margin-bottom: 10px;"><strong>// Dedicated Prefix Index:</strong></div>
+                        <pre style="margin: 5px 0; color: #a5a5a5;">db.products.createIndex(${data.mql.index2})</pre>
+                    </div>
+                </div>
+            ` : '';
+            
+            resultsDiv.innerHTML = mqlSection + `
+                <div class="results">
+                    <div class="result-card">
+                        <h3>Index abc (category-price-brand)</h3>
+                        <div class="metric">
+                            <span class="metric-label">Execution Time:</span>
+                            <span class="metric-value">${index1.executionTime}ms</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Examined:</span>
+                            <span class="metric-value">${index1.executionStats.totalDocsExamined || 'N/A'}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Returned:</span>
+                            <span class="metric-value">${index1.resultCount || 0}</span>
+                        </div>
+                    </div>
+                    <div class="result-card">
+                        <h3>Index a (category만)</h3>
+                        <div class="metric">
+                            <span class="metric-label">Execution Time:</span>
+                            <span class="metric-value">${index2.executionTime}ms</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Examined:</span>
+                            <span class="metric-value">${index2.executionStats.totalDocsExamined || 'N/A'}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Returned:</span>
+                            <span class="metric-value">${index2.resultCount || 0}</span>
+                        </div>
+                    </div>
+                    <div class="result-card">
+                        <h3>Key Insight</h3>
+                        <div class="metric">
+                            <span class="metric-label">Index Prefix:</span>
+                            <span class="metric-value improvement">abc 인덱스는 a 필드로 검색 시에도 효율적으로 사용됩니다</span>
+                        </div>
+                        <div class="query-info" style="font-size: 12px; margin-top: 10px;">
+                            <strong>중요:</strong> compound 인덱스 {category, price, brand}는 {category} 검색에도 prefix로 사용될 수 있습니다.
+                            즉, abc 인덱스 하나로 a, ab, abc 검색 모두를 지원합니다.
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function displayScenario4Results(data) {
+            const resultsDiv = document.getElementById('scenario4-results');
+            
+            if (!data.success || !data.index1 || !data.index2) {
+                resultsDiv.innerHTML = `<div class="alert alert-error">Error: Invalid response from server: ${JSON.stringify(data)}</div>`;
+                return;
+            }
+            
+            const index1 = data.index1;
+            const index2 = data.index2;
+            const winner = index1.executionTime < index2.executionTime ? 'ESR (Recommended)' : 'ERS (Incorrect)';
+            
+            const mqlSection = data.mql ? `
+                <div class="result-card" style="border: 2px solid #6366f1;">
+                    <h3>📋 MQL (MongoDB Query Language)</h3>
+                    <div style="background: #1e1e2e; padding: 15px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 13px; overflow-x: auto;">
+                        <div style="color: #a78bfa; margin-bottom: 10px;"><strong>// Query:</strong></div>
+                        <pre style="margin: 5px 0; color: #a5a5a5;">db.products.find(${data.mql.query}).sort(${data.mql.sort}).limit(100)</pre>
+                        <div style="color: #a78bfa; margin-top: 15px; margin-bottom: 10px;"><strong>// ESR (Recommended):</strong></div>
+                        <pre style="margin: 5px 0; color: #a5a5a5;">db.products.createIndex(${data.mql.index1})</pre>
+                        <div style="color: #a78bfa; margin-top: 15px; margin-bottom: 10px;"><strong>// ERS (Incorrect):</strong></div>
+                        <pre style="margin: 5px 0; color: #a5a5a5;">db.products.createIndex(${data.mql.index2})</pre>
+                    </div>
+                </div>
+            ` : '';
+            
+            resultsDiv.innerHTML = mqlSection + `
+                <div class="results">
+                    <div class="result-card">
+                        <h3>ESR Index (Equality, Sort, Range)</h3>
+                        <div class="metric">
+                            <span class="metric-label">Execution Time:</span>
+                            <span class="metric-value">${index1.executionTime}ms</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Examined:</span>
+                            <span class="metric-value">${index1.executionStats.totalDocsExamined || 'N/A'}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Index Keys Used:</span>
+                            <span class="metric-value">${index1.executionStats.totalKeysExamined || 'N/A'}</span>
+                        </div>
+                    </div>
+                    <div class="result-card">
+                        <h3>ERS Index (Equality, Range, Sort)</h3>
+                        <div class="metric">
+                            <span class="metric-label">Execution Time:</span>
+                            <span class="metric-value">${index2.executionTime}ms</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Examined:</span>
+                            <span class="metric-value">${index2.executionStats.totalDocsExamined || 'N/A'}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Index Keys Used:</span>
+                            <span class="metric-value">${index2.executionStats.totalKeysExamined || 'N/A'}</span>
+                        </div>
+                    </div>
+                    <div class="result-card">
+                        <h3>Winner</h3>
+                        <div class="metric">
+                            <span class="metric-label">Best Strategy:</span>
+                            <span class="metric-value ${winner.includes('ESR') ? 'improvement' : 'regression'}">${winner}</span>
+                        </div>
+                        <div class="query-info">
+                            <strong>ESR Rule:</strong> Equality → Sort → Range<br>
+                            MongoDB optimizes queries best when index fields follow this order.
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function displayScenario5Results(data) {
+            const resultsDiv = document.getElementById('scenario5-results');
+            
+            if (!data.success || !data.noIndex || !data.index1 || !data.index2) {
+                resultsDiv.innerHTML = `<div class="alert alert-error">Error: Invalid response from server: ${JSON.stringify(data)}</div>`;
+                return;
+            }
+            
+            const noIndex = data.noIndex;
+            const index1 = data.index1;
+            const index2 = data.index2;
+            
+            const mqlSection = data.mql ? `
+                <div class="result-card" style="border: 2px solid #6366f1;">
+                    <h3>📋 MQL (MongoDB Query Language)</h3>
+                    <div style="background: #1e1e2e; padding: 15px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 13px; overflow-x: auto;">
+                        <div style="color: #a78bfa; margin-bottom: 10px;"><strong>// Query:</strong></div>
+                        <pre style="margin: 5px 0; color: #a5a5a5;">db.products.find(${data.mql.query}).sort(${data.mql.sort}).limit(100)</pre>
+                        <div style="color: #a78bfa; margin-top: 15px; margin-bottom: 10px;"><strong>// Index 1 (Matching):</strong></div>
+                        <pre style="margin: 5px 0; color: #a5a5a5;">db.products.createIndex(${data.mql.index1})</pre>
+                        <div style="color: #a78bfa; margin-top: 15px; margin-bottom: 10px;"><strong>// Index 2 (Reversed):</strong></div>
+                        <pre style="margin: 5px 0; color: #a5a5a5;">db.products.createIndex(${data.mql.index2})</pre>
+                    </div>
+                </div>
+            ` : '';
+            
+            resultsDiv.innerHTML = mqlSection + `
+                <div class="results">
+                    <div class="result-card">
+                        <h3>Without Index</h3>
+                        <div class="metric">
+                            <span class="metric-label">Execution Time:</span>
+                            <span class="metric-value">${noIndex.executionTime}ms</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Examined:</span>
+                            <span class="metric-value">${noIndex.executionStats.totalDocsExamined || 'N/A'}</span>
+                        </div>
+                    </div>
+                    <div class="result-card">
+                        <h3>Index 1 ({category:1, rating:-1})</h3>
+                        <div class="metric">
+                            <span class="metric-label">Execution Time:</span>
+                            <span class="metric-value">${index1.executionTime}ms</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Examined:</span>
+                            <span class="metric-value">${index1.executionStats.totalDocsExamined || 'N/A'}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Index Keys Used:</span>
+                            <span class="metric-value">${index1.executionStats.totalKeysExamined || 'N/A'}</span>
+                        </div>
+                    </div>
+                    <div class="result-card">
+                        <h3>Index 2 ({category:-1, rating:1})</h3>
+                        <div class="metric">
+                            <span class="metric-label">Execution Time:</span>
+                            <span class="metric-value">${index2.executionTime}ms</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Documents Examined:</span>
+                            <span class="metric-value">${index2.executionStats.totalDocsExamined || 'N/A'}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Index Keys Used:</span>
+                            <span class="metric-value">${index2.executionStats.totalKeysExamined || 'N/A'}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="results" style="margin-top: 20px;">
+                    <div class="result-card">
+                        <h3>Key Insight</h3>
+                        <div class="metric">
+                            <span class="metric-label">Comparison:</span>
+                            <span class="metric-value improvement">Index 1({category:1, rating:-1})도 역방향으로 효율적으로 사용됨</span>
+                        </div>
+                        <div class="query-info" style="font-size: 12px; margin-top: 10px;">
+                            <strong>중요:</strong> {category:1, rating:-1} 인덱스는 {category:-1, rating:1} sort 쿼리에도 역방향 스캔으로 처리할 수 있습니다. 
+                            즉, 반대 방향 sort를 위해서는 별도 인덱스를 만들 필요가 없습니다!
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function runAllScenarios() {
+            await runScenario11();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await runScenario12();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await runScenario13();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await runScenario2();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await runScenario3();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await runScenario4();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await runScenario5();
+        }
+    </script>
+</body>
+</html>
+
